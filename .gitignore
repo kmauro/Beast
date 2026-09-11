@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.vite/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+
+# Runtime and persistent data
+data/
+backups/
+.wwebjs_auth/
+.wwebjs_cache/
+.cache/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+

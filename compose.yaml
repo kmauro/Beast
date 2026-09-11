@@ -1,0 +1,76 @@
+name: beast
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - internal
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - internal
+      - panel
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+    volumes:
+      - whatsapp_auth:/app/data/whatsapp-auth
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - internal
+      - egress
+
+networks:
+  internal:
+    internal: true
+  panel:
+  egress:
+
+volumes:
+  mysql_data:
+  whatsapp_auth:
