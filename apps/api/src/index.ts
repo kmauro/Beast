@@ -2,19 +2,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
-import { createDatabase } from '@beast/database';
+import { createDatabase, SensitiveDataCipher } from '@beast/database';
 import 'dotenv/config';
 import Fastify from 'fastify';
+import { createAuthGuard, createSameOriginGuard, registerAuthRoutes } from './auth.js';
 import { loadConfig } from './config.js';
+import { registerConversationRoutes } from './conversations.js';
+import { registerFormRoutes } from './forms.js';
 import { getSystemHealth } from './health.js';
 
 const config = loadConfig();
 const db = createDatabase(config.DATABASE_URL);
+const cipher = new SensitiveDataCipher(config.DATA_ENCRYPTION_KEY);
 const app = Fastify({ logger: true });
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(currentDirectory, '../../web');
 
-await app.register(cookie);
+await app.register(cookie, { secret: config.SESSION_SECRET });
 await app.register(fastifyStatic, {
   root: webRoot,
   wildcard: false,
@@ -32,7 +36,21 @@ app.get('/api/config/public', async () => ({
   sellerBatchSize: Number(process.env.SELLER_BATCH_SIZE ?? 5),
 }));
 
-//app.get('/', async (_request, reply) => reply.sendFile('index.html'));
+app.addHook('preHandler', createSameOriginGuard());
+await registerAuthRoutes(app, config);
+
+await app.register(
+  async (protectedApi) => {
+    protectedApi.addHook('onRequest', async (_request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      reply.header('X-Content-Type-Options', 'nosniff');
+    });
+    protectedApi.addHook('preHandler', createAuthGuard());
+    await registerConversationRoutes(protectedApi, db, cipher);
+    await registerFormRoutes(protectedApi, db);
+  },
+  { prefix: '/api' },
+);
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'Deteniendo API');
@@ -45,4 +63,3 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ host: config.API_HOST, port: config.API_PORT });
-

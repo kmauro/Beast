@@ -11,6 +11,7 @@ export const formFieldTypes = [
 ] as const;
 
 export const FormFieldTypeSchema = z.enum(formFieldTypes);
+export type FormFieldType = z.infer<typeof FormFieldTypeSchema>;
 
 export const FormFieldDefinitionSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]*$/),
@@ -19,6 +20,7 @@ export const FormFieldDefinitionSchema = z.object({
   helpText: z.string().max(1000).nullable().default(null),
   type: FormFieldTypeSchema,
   required: z.boolean().default(false),
+  essential: z.boolean().default(false),
   includeInSummary: z.boolean().default(true),
   options: z.array(z.string().min(1).max(120)).default([]),
   displayOrder: z.number().int().nonnegative(),
@@ -50,6 +52,7 @@ export const essentialFields: FormFieldDefinition[] = [
     helpText: null,
     type: 'TEXT',
     required: true,
+    essential: true,
     includeInSummary: true,
     options: [],
     displayOrder: 10,
@@ -62,6 +65,7 @@ export const essentialFields: FormFieldDefinition[] = [
     helpText: null,
     type: 'TEXT',
     required: true,
+    essential: true,
     includeInSummary: true,
     options: [],
     displayOrder: 20,
@@ -74,6 +78,7 @@ export const essentialFields: FormFieldDefinition[] = [
     helpText: null,
     type: 'SINGLE_CHOICE',
     required: true,
+    essential: true,
     includeInSummary: true,
     options: ['Residencia', 'Local', 'Oficina', 'Otro'],
     displayOrder: 30,
@@ -86,6 +91,7 @@ export const essentialFields: FormFieldDefinition[] = [
     helpText: null,
     type: 'LONG_TEXT',
     required: true,
+    essential: true,
     includeInSummary: true,
     options: [],
     displayOrder: 40,
@@ -98,6 +104,7 @@ export const essentialFields: FormFieldDefinition[] = [
     helpText: null,
     type: 'BOOLEAN',
     required: true,
+    essential: true,
     includeInSummary: true,
     options: [],
     displayOrder: 50,
@@ -105,3 +112,59 @@ export const essentialFields: FormFieldDefinition[] = [
   },
 ];
 
+const siteSurveyFields: FormFieldDefinition[] = [
+  {
+    key: 'floors_or_rooms',
+    label: 'Pisos y ambientes',
+    question: '¿Cuántos pisos y ambientes hay que cubrir aproximadamente?',
+    helpText: null,
+    type: 'LONG_TEXT',
+    required: true,
+    essential: false,
+    includeInSummary: true,
+    options: [],
+    displayOrder: 100,
+    visibleWhen: null,
+  },
+  {
+    key: 'equipment_plan',
+    label: 'Equipos o relevamiento',
+    question: '¿Ya sabés cuántos equipos necesitás o preferís un relevamiento profesional?',
+    helpText: null,
+    type: 'SINGLE_CHOICE',
+    required: true,
+    essential: false,
+    includeInSummary: true,
+    options: ['Ya sabe la cantidad', 'Necesita relevamiento'],
+    displayOrder: 110,
+    visibleWhen: null,
+  },
+  {
+    key: 'equipment_quantity',
+    label: 'Cantidad estimada',
+    question: '¿Cuántos equipos o puntos estimás que serían necesarios?',
+    helpText: null,
+    type: 'INTEGER',
+    required: false,
+    essential: false,
+    includeInSummary: true,
+    options: [],
+    displayOrder: 120,
+    visibleWhen: {
+      fieldKey: 'equipment_plan',
+      operator: 'EQUALS',
+      value: 'Ya sabe la cantidad',
+    },
+  },
+];
+
+export function defaultFieldsForService(serviceCode: string): FormFieldDefinition[] {
+  const includesSiteSurvey = [
+    'CAMERAS',
+    'ALARMS',
+    'WIFI_NETWORK',
+    'WIRED_NETWORK',
+  ].includes(serviceCode);
+
+  return structuredClone(includesSiteSurvey ? [...essentialFields, ...siteSurveyFields] : essentialFields);
+}

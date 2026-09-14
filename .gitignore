@@ -2,6 +2,7 @@ node_modules/
 dist/
 .vite/
 coverage/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
@@ -21,4 +22,3 @@ backups/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
-

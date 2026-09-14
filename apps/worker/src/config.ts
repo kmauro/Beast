@@ -7,6 +7,13 @@ const booleanFromString = z
 
 const WorkerConfigSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  DATA_ENCRYPTION_KEY: z
+    .string()
+    .min(1)
+    .refine((value) => {
+      const decoded = Buffer.from(value, 'base64');
+      return decoded.length === 32 && decoded.toString('base64') === value;
+    }, 'Debe ser una clave Base64 válida de 32 bytes'),
   OLLAMA_BASE_URL: z.string().url().default('http://host.docker.internal:11434'),
   OLLAMA_MODEL: z.string().min(1).default('qwen3:4b'),
   WHATSAPP_CLIENT_ID: z.string().min(1).default('beast-main'),
@@ -25,4 +32,3 @@ export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): WorkerConfig {
   return WorkerConfigSchema.parse(environment);
 }
-

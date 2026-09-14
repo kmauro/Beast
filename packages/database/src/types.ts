@@ -14,6 +14,55 @@ export interface SellersTable {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ServiceCatalogTable {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  active: ColumnType<boolean, boolean | number, boolean | number>;
+  display_order: number;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface FormTemplatesTable {
+  id: string;
+  service_id: string;
+  name: string;
+  description: string | null;
+  active: ColumnType<boolean, boolean | number, boolean | number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface FormVersionsTable {
+  id: string;
+  template_id: string;
+  version_number: number;
+  status: 'DRAFT' | 'PUBLISHED' | 'RETIRED';
+  created_by: string | null;
+  published_at: NullableTimestamp;
+  created_at: Generated<Timestamp>;
+}
+
+export interface FormFieldsTable {
+  id: string;
+  form_version_id: string;
+  field_key: string;
+  label: string;
+  question: string;
+  help_text: string | null;
+  field_type: 'TEXT' | 'LONG_TEXT' | 'INTEGER' | 'BOOLEAN' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE';
+  required: ColumnType<boolean, boolean | number, boolean | number>;
+  essential: ColumnType<boolean, boolean | number, boolean | number>;
+  include_in_summary: ColumnType<boolean, boolean | number, boolean | number>;
+  options_json: unknown | null;
+  visible_when_json: unknown | null;
+  validation_json: unknown | null;
+  display_order: number;
+  created_at: Generated<Timestamp>;
+}
+
 export interface ConversationsTable {
   id: string;
   whatsapp_chat_id: string;
@@ -65,11 +114,26 @@ export interface SystemComponentsTable {
   checked_at: Timestamp;
 }
 
+export interface AuditLogTable {
+  id: Generated<number>;
+  actor_user_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  before_json: unknown | null;
+  after_json: unknown | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface DatabaseSchema {
   sellers: SellersTable;
+  service_catalog: ServiceCatalogTable;
+  form_templates: FormTemplatesTable;
+  form_versions: FormVersionsTable;
+  form_fields: FormFieldsTable;
   conversations: ConversationsTable;
   messages: MessagesTable;
   jobs: JobsTable;
   system_components: SystemComponentsTable;
+  audit_log: AuditLogTable;
 }
-

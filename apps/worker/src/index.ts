@@ -1,17 +1,20 @@
-import { createDatabase } from '@beast/database';
+import { createDatabase, SensitiveDataCipher } from '@beast/database';
 import 'dotenv/config';
 import qrcode from 'qrcode-terminal';
 import whatsapp from 'whatsapp-web.js';
 import { loadConfig } from './config.js';
 import { writeHeartbeat, type WorkerStatus } from './heartbeat.js';
+import { ingestInboundMessage } from './message-ingestion.js';
 
 const { Client, LocalAuth } = whatsapp;
 const config = loadConfig();
 const db = createDatabase(config.DATABASE_URL);
+const cipher = new SensitiveDataCipher(config.DATA_ENCRYPTION_KEY);
 
 let currentStatus: WorkerStatus = 'DEGRADED';
 let currentDetail: string | null = 'Inicializando WhatsApp';
 let shuttingDown = false;
+let ingestionQueue = Promise.resolve();
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -71,14 +74,23 @@ client.on('disconnected', (reason) => {
 });
 
 client.on('message', (message) => {
-  // El motor conversacional se activará cuando existan vendedores, formularios
-  // publicados, cifrado y pruebas de aceptación. Nunca responder desde este
-  // listener mientras BOT_REPLY_ENABLED sea false.
-  console.log('Mensaje entrante recibido', {
-    messageId: message.id._serialized,
-    chatId: message.from,
-    replyEnabled: config.BOT_REPLY_ENABLED,
-  });
+  ingestionQueue = ingestionQueue
+    .then(async () => {
+      const result = await ingestInboundMessage(db, cipher, message);
+      console.log('Mensaje entrante procesado', {
+        outcome: result.outcome,
+        ...('messageId' in result
+          ? {
+              messageId: result.messageId.slice(0, 12),
+              identitySource: result.identitySource,
+            }
+          : {}),
+        replyEnabled: config.BOT_REPLY_ENABLED,
+      });
+    })
+    .catch((error: unknown) => {
+      console.error('No se pudo guardar el mensaje entrante:', error);
+    });
 });
 
 const heartbeatTimer = setInterval(() => {
@@ -95,6 +107,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await updateStatus('DOWN', `Worker detenido por ${signal}`);
+    await ingestionQueue;
     await client.destroy();
   } finally {
     await db.destroy();
@@ -107,4 +120,3 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await updateStatus('DEGRADED', 'Inicializando WhatsApp');
 await client.initialize();
-

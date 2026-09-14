@@ -21,7 +21,11 @@ Bot local para precalificar consultas recibidas por WhatsApp Business, recolecta
 ## Inicio rápido
 
 1. Copiar `.env.example` como `.env`.
-2. Reemplazar todas las contraseñas y secretos de ejemplo.
+2. Reemplazar todas las contraseñas y secretos de ejemplo. Generar
+   `DATA_ENCRYPTION_KEY` con
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+   Definir también `PANEL_ADMIN_USERNAME` y una contraseña de panel de al menos
+   12 caracteres en `PANEL_ADMIN_PASSWORD`.
 3. Instalar y abrir Ollama en Windows.
 4. Descargar el modelo: `ollama pull qwen3:4b`.
 5. Iniciar los servicios: `docker compose up --build -d`.
@@ -31,11 +35,19 @@ Bot local para precalificar consultas recibidas por WhatsApp Business, recolecta
 ## Seguridad
 
 - No confirmar `.env`, perfiles de Chrome, sesiones de WhatsApp ni respaldos.
+- Los identificadores buscables se guardan como HMAC-SHA-256; los números y mensajes
+  se cifran con AES-256-GCM mediante `DATA_ENCRYPTION_KEY`.
+- Conservar una copia protegida de `DATA_ENCRYPTION_KEY`: perderla impide recuperar
+  los datos cifrados existentes.
+- El panel exige una sesión firmada, usa una cookie `HttpOnly` y rechaza escrituras
+  originadas desde otro host.
 - Restringir el puerto del panel a la red privada mediante el Firewall de Windows.
 - Utilizar un número de WhatsApp Business dedicado cuando sea posible.
 - Mantener una copia de seguridad lógica de MySQL y del volumen de autenticación.
 
 ## Estado
 
-El proyecto se encuentra en su etapa inicial. El esqueleto incluye servicios, esquema de datos y comprobaciones de salud; el motor conversacional completo se incorporará de forma incremental y con pruebas.
-
+El worker persiste de forma cifrada y deduplicada los mensajes de texto directos
+entrantes. El panel permite consultar conversaciones y administrar formularios mediante
+borradores versionados y publicación explícita. Las respuestas automáticas permanecen
+desactivadas hasta completar el motor conversacional y sus pruebas.
