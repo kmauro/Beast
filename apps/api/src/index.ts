@@ -32,7 +32,7 @@ app.get('/api/config/public', async () => ({
   sellerBatchSize: Number(process.env.SELLER_BATCH_SIZE ?? 5),
 }));
 
-app.get('/', async (_request, reply) => reply.sendFile('index.html'));
+//app.get('/', async (_request, reply) => reply.sendFile('index.html'));
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'Deteniendo API');

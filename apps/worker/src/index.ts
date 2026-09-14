@@ -21,6 +21,8 @@ const client = new Client({
   puppeteer: {
     headless: config.WHATSAPP_HEADLESS,
     args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--no-first-run',
