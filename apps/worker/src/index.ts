@@ -3,18 +3,21 @@ import 'dotenv/config';
 import qrcode from 'qrcode-terminal';
 import whatsapp from 'whatsapp-web.js';
 import { loadConfig } from './config.js';
+import { ConversationLifecycle } from './conversation-lifecycle.js';
 import { writeHeartbeat, type WorkerStatus } from './heartbeat.js';
-import { ingestInboundMessage } from './message-ingestion.js';
+import { ingestInboundMessage, ingestOutboundMessage } from './message-ingestion.js';
 
 const { Client, LocalAuth } = whatsapp;
 const config = loadConfig();
 const db = createDatabase(config.DATABASE_URL);
 const cipher = new SensitiveDataCipher(config.DATA_ENCRYPTION_KEY);
+const lifecycle = new ConversationLifecycle(db, config);
 
 let currentStatus: WorkerStatus = 'DEGRADED';
 let currentDetail: string | null = 'Inicializando WhatsApp';
 let shuttingDown = false;
 let ingestionQueue = Promise.resolve();
+let lifecycleSweepRunning = false;
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -77,6 +80,9 @@ client.on('message', (message) => {
   ingestionQueue = ingestionQueue
     .then(async () => {
       const result = await ingestInboundMessage(db, cipher, message);
+      if (result.outcome === 'stored') {
+        await lifecycle.handleInbound(result.conversationId, new Date(message.timestamp * 1000));
+      }
       console.log('Mensaje entrante procesado', {
         outcome: result.outcome,
         ...('messageId' in result
@@ -93,16 +99,54 @@ client.on('message', (message) => {
     });
 });
 
+client.on('message_create', (message) => {
+  if (!message.fromMe) return;
+  ingestionQueue = ingestionQueue
+    .then(async () => {
+      const result = await ingestOutboundMessage(db, cipher, message);
+      if (result.outcome === 'stored') {
+        await lifecycle.handleSellerActivity(result.conversationId);
+      }
+      console.log('Mensaje saliente procesado', {
+        outcome: result.outcome,
+        ...('messageId' in result
+          ? { messageId: result.messageId.slice(0, 12), identitySource: result.identitySource }
+          : {}),
+      });
+    })
+    .catch((error: unknown) => {
+      console.error('No se pudo guardar el mensaje saliente:', error);
+    });
+});
+
 const heartbeatTimer = setInterval(() => {
   void writeHeartbeat(db, currentStatus, currentDetail, {
     replyEnabled: config.BOT_REPLY_ENABLED,
   }).catch((error: unknown) => console.error('No se pudo registrar el heartbeat:', error));
 }, 30_000);
 
+async function runLifecycleSweep(): Promise<void> {
+  if (lifecycleSweepRunning) return;
+  lifecycleSweepRunning = true;
+  try {
+    const result = await lifecycle.sweep();
+    if (result.resumed > 0 || result.followedUp > 0 || result.closed > 0) {
+      console.log('Ciclo de conversaciones actualizado', result);
+    }
+  } catch (error) {
+    console.error('Falló el ciclo de conversaciones:', error);
+  } finally {
+    lifecycleSweepRunning = false;
+  }
+}
+
+const lifecycleTimer = setInterval(() => void runLifecycleSweep(), config.LIFECYCLE_SWEEP_INTERVAL_MS);
+
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(heartbeatTimer);
+  clearInterval(lifecycleTimer);
   console.log(`Deteniendo worker por ${signal}`);
 
   try {
@@ -120,3 +164,4 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await updateStatus('DEGRADED', 'Inicializando WhatsApp');
 await client.initialize();
+void runLifecycleSweep();

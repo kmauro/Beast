@@ -25,7 +25,16 @@ const WorkerConfigSchema = z.object({
   BOT_REPLY_ENABLED: booleanFromString,
   BUSINESS_TIMEZONE: z.string().default('America/Argentina/Buenos_Aires'),
   SELLER_BATCH_SIZE: z.coerce.number().int().positive().default(5),
-});
+  FOLLOW_UP_AFTER_BUSINESS_HOURS: z.coerce.number().int().positive().default(24),
+  AUTO_CLOSE_AFTER_BUSINESS_HOURS: z.coerce.number().int().positive().default(72),
+  LIFECYCLE_SWEEP_INTERVAL_MS: z.coerce.number().int().min(15_000).default(60_000),
+}).refine(
+  (value) => value.AUTO_CLOSE_AFTER_BUSINESS_HOURS > value.FOLLOW_UP_AFTER_BUSINESS_HOURS,
+  {
+    message: 'AUTO_CLOSE_AFTER_BUSINESS_HOURS debe ser mayor que FOLLOW_UP_AFTER_BUSINESS_HOURS',
+    path: ['AUTO_CLOSE_AFTER_BUSINESS_HOURS'],
+  },
+);
 
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 

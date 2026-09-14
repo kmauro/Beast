@@ -42,4 +42,18 @@ describe('resolveWhatsAppMessageIdentity', () => {
     );
     expect(resolveWhatsAppMessageIdentity(message).source).toBe('content-fallback');
   });
+
+  it('usa el destinatario para reconstruir un identificador saliente', () => {
+    const result = resolveWhatsAppMessageIdentity(messageWith({
+      id: { id: 'OUT123', fromMe: true },
+      from: '5491100000000@c.us',
+      to: '5491198765432@c.us',
+      fromMe: true,
+    }));
+
+    expect(result).toEqual({
+      value: '1_5491198765432@c.us_OUT123',
+      source: 'parts',
+    });
+  });
 });

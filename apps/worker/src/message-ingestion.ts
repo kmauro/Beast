@@ -13,6 +13,7 @@ export type MessageIngestionResult =
   | { outcome: 'ignored'; reason: string };
 
 export type MessageIdentitySource = 'serialized' | 'parts' | 'content-fallback';
+export type OutboundSenderType = 'BOT' | 'SELLER';
 
 type RuntimeMessageId = {
   _serialized?: unknown;
@@ -49,7 +50,7 @@ export function resolveWhatsAppMessageIdentity(message: Message): {
   }
 
   const opaqueId = nonEmptyString(runtimeId?.id);
-  const remoteId = serializeRemoteId(runtimeId?.remote) ?? message.from;
+  const remoteId = serializeRemoteId(runtimeId?.remote) ?? (message.fromMe ? message.to : message.from);
 
   if (opaqueId) {
     const fromMe =
@@ -63,6 +64,7 @@ export function resolveWhatsAppMessageIdentity(message: Message): {
   return {
     value: JSON.stringify({
       from: message.from,
+      to: message.to,
       fromMe: message.fromMe,
       timestamp: message.timestamp,
       type: message.type,
@@ -72,15 +74,24 @@ export function resolveWhatsAppMessageIdentity(message: Message): {
   };
 }
 
+function isDirectChatId(value: string): boolean {
+  return !value.endsWith('@broadcast') &&
+    !value.endsWith('@g.us') &&
+    !value.endsWith('@newsletter');
+}
+
 function isDirectTextMessage(message: Message): boolean {
   return (
     !message.fromMe &&
     message.type === 'chat' &&
     message.body.trim().length > 0 &&
-    !message.from.endsWith('@broadcast') &&
-    !message.from.endsWith('@g.us') &&
-    !message.from.endsWith('@newsletter')
+    isDirectChatId(message.from)
   );
+}
+
+function isDirectOutboundTextMessage(message: Message): boolean {
+  return message.fromMe && message.type === 'chat' && message.body.trim().length > 0 &&
+    typeof message.to === 'string' && message.to.length > 0 && isDirectChatId(message.to);
 }
 
 export async function ingestInboundMessage(
@@ -177,6 +188,58 @@ export async function ingestInboundMessage(
         occurred_at: occurredAt,
       })
       .execute();
+
+    return {
+      outcome: 'stored',
+      conversationId: conversation.id,
+      messageId,
+      identitySource: identity.source,
+    };
+  });
+}
+
+export async function ingestOutboundMessage(
+  db: BeastDatabase,
+  cipher: SensitiveDataCipher,
+  message: Message,
+  senderType: OutboundSenderType = 'SELLER',
+): Promise<MessageIngestionResult> {
+  if (!isDirectOutboundTextMessage(message)) {
+    return { outcome: 'ignored', reason: 'El mensaje no es texto directo saliente' };
+  }
+
+  const identity = resolveWhatsAppMessageIdentity(message);
+  const messageId = cipher.lookupHash(identity.value);
+  const chatKey = cipher.lookupHash(message.to);
+
+  return db.transaction().execute(async (transaction): Promise<MessageIngestionResult> => {
+    const duplicate = await transaction.selectFrom('messages').select('id')
+      .where('whatsapp_message_id', '=', messageId).executeTakeFirst();
+    if (duplicate) return { outcome: 'duplicate', messageId, identitySource: identity.source };
+
+    const conversation = await transaction.selectFrom('conversations')
+      .select(['id', 'last_message_at'])
+      .where('whatsapp_chat_id', '=', chatKey)
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst();
+    if (!conversation) {
+      return { outcome: 'ignored', reason: 'No existe una conversación para el mensaje saliente' };
+    }
+
+    const occurredAt = new Date(message.timestamp * 1000);
+    const previousActivity = new Date(conversation.last_message_at);
+    await transaction.updateTable('conversations').set({
+      last_message_at: occurredAt.getTime() > previousActivity.getTime() ? occurredAt : previousActivity,
+    }).where('id', '=', conversation.id).execute();
+    await transaction.insertInto('messages').values({
+      id: randomUUID(),
+      conversation_id: conversation.id,
+      whatsapp_message_id: messageId,
+      direction: 'OUTBOUND',
+      sender_type: senderType,
+      body_encrypted: cipher.encrypt(message.body),
+      occurred_at: occurredAt,
+    }).execute();
 
     return {
       outcome: 'stored',

@@ -21,6 +21,9 @@ const ConfigSchema = z.object({
     }, 'Debe ser una clave Base64 válida de 32 bytes'),
   OLLAMA_BASE_URL: z.string().url().default('http://host.docker.internal:11434'),
   OLLAMA_MODEL: z.string().min(1).default('qwen3:4b'),
+  BUSINESS_TIMEZONE: z.string().default('America/Argentina/Buenos_Aires'),
+  FOLLOW_UP_AFTER_BUSINESS_HOURS: z.coerce.number().int().positive().default(24),
+  AUTO_CLOSE_AFTER_BUSINESS_HOURS: z.coerce.number().int().positive().default(72),
 });
 
 export type ApiConfig = z.infer<typeof ConfigSchema>;

@@ -30,6 +30,35 @@ export interface ConversationDetail extends ConversationListItem {
   messages: ConversationMessage[];
 }
 
+export interface SellerItem {
+  id: string;
+  name: string;
+  whatsappNumber: string;
+  whatsappLabel: string;
+  rotationOrder: number;
+  active: boolean;
+}
+
+export interface BusinessHourRule {
+  weekday: number;
+  enabled: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+}
+
+export interface HolidayItem {
+  date: string;
+  name: string;
+}
+
+export interface BusinessRules {
+  timezone: string;
+  hours: BusinessHourRule[];
+  holidays: HolidayItem[];
+  followUpAfterBusinessHours: number;
+  autoCloseAfterBusinessHours: number;
+}
+
 export interface FormTemplateSummary {
   id: string;
   name: string;

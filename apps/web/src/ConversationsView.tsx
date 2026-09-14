@@ -52,6 +52,34 @@ export function ConversationsView() {
     return () => { active = false; };
   }, [selectedId]);
 
+  const transition = async (target: 'NEW' | 'CLOSED') => {
+    if (!detail) return;
+    try {
+      await apiRequest(`/api/conversations/${detail.id}/transition`, {
+        method: 'POST',
+        body: JSON.stringify({ state: target }),
+      });
+      const updated = await apiRequest<ConversationDetail>(`/api/conversations/${detail.id}`);
+      setDetail(updated);
+      await loadList();
+      setError(null);
+    } catch { setError('No se pudo cambiar el estado de la conversación.'); }
+  };
+
+  const assignSeller = async () => {
+    if (!detail) return;
+    try {
+      await apiRequest(`/api/conversations/${detail.id}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'HUMAN_REQUESTED' }),
+      });
+      const updated = await apiRequest<ConversationDetail>(`/api/conversations/${detail.id}`);
+      setDetail(updated);
+      await loadList();
+      setError(null);
+    } catch { setError('No se pudo asignar. Verificá que exista un vendedor activo y que el estado lo permita.'); }
+  };
+
   return (
     <>
       <header className="page-header"><div><p className="eyebrow">Bandeja</p><h1>Conversaciones</h1></div><button className="secondary" onClick={() => void loadList()}>Actualizar</button></header>
@@ -66,7 +94,7 @@ export function ConversationsView() {
         </div>
         <div className="conversation-detail">
           {!detail && <p className="empty-state">Seleccioná una conversación.</p>}
-          {detail && <><div className="detail-heading"><div><p className="eyebrow">Cliente</p><h2>{detail.customer}</h2></div><span className={`state-badge state-${detail.state.toLowerCase()}`}>{stateLabels[detail.state]}</span></div><p className="detail-meta">{detail.sellerName ? `Asignado a ${detail.sellerName}` : 'Sin vendedor asignado'}</p><div className="message-thread">{detail.messages.map((message) => <article className={`message ${message.direction === 'INBOUND' ? 'incoming' : 'outgoing'}`} key={message.id}><small>{message.senderType}</small><p>{message.body}</p><time>{dateFormatter.format(new Date(message.occurredAt))}</time></article>)}</div></>}
+          {detail && <><div className="detail-heading"><div><p className="eyebrow">Cliente</p><h2>{detail.customer}</h2></div><div className="detail-actions"><span className={`state-badge state-${detail.state.toLowerCase()}`}>{stateLabels[detail.state]}</span>{['NEW', 'BOT_QUALIFYING', 'OUT_OF_HOURS', 'READY_FOR_HANDOFF'].includes(detail.state) && <button className="primary" onClick={() => void assignSeller()}>Asignar vendedor</button>}{detail.state === 'CLOSED' ? <button className="secondary" onClick={() => void transition('NEW')}>Reabrir</button> : <button className="secondary" onClick={() => void transition('CLOSED')}>Cerrar</button>}</div></div><p className="detail-meta">{detail.sellerName ? `Asignado a ${detail.sellerName}` : 'Sin vendedor asignado'}</p><div className="message-thread">{detail.messages.map((message) => <article className={`message ${message.direction === 'INBOUND' ? 'incoming' : 'outgoing'}`} key={message.id}><small>{message.senderType}</small><p>{message.body}</p><time>{dateFormatter.format(new Date(message.occurredAt))}</time></article>)}</div></>}
         </div>
       </section>
     </>

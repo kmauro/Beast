@@ -48,6 +48,36 @@ Bot local para precalificar consultas recibidas por WhatsApp Business, recolecta
 ## Estado
 
 El worker persiste de forma cifrada y deduplicada los mensajes de texto directos
-entrantes. El panel permite consultar conversaciones y administrar formularios mediante
-borradores versionados y publicación explícita. Las respuestas automáticas permanecen
-desactivadas hasta completar el motor conversacional y sus pruebas.
+entrantes y salientes. El panel permite consultar conversaciones, administrar formularios
+mediante borradores versionados y publicación explícita, mantener los vendedores y editar
+el calendario comercial.
+
+La asignación manual desde la bandeja usa bloques de cinco conversaciones y guarda el
+vendedor elegido en MySQL dentro de la misma transacción que avanza la rotación. El
+worker clasifica los mensajes como horario comercial o fuera de horario, reactiva las
+conversaciones cuando abre el negocio y controla seguimiento y cierre mediante horas
+hábiles, excluyendo los feriados configurados en el panel.
+
+Los plazos predeterminados son 24 horas hábiles para marcar una conversación como
+pendiente de seguimiento y 72 para cerrarla. Una nueva actividad del cliente o del
+vendedor reinicia la inactividad. Los valores editados en el panel se guardan en MySQL;
+las variables de entorno se usan solamente como respaldo cuando todavía no existe una
+configuración persistida.
+
+Las respuestas automáticas permanecen desactivadas. La asignación actual tampoco aplica
+todavía etiquetas en WhatsApp ni envía el resumen al vendedor: esas acciones formarán
+parte del motor conversacional y del flujo de entrega posteriores.
+
+## Panel interno
+
+- **Conversaciones:** filtra por estado, muestra el historial, asigna por rotación y
+  permite cerrar o reabrir manualmente.
+- **Formularios:** crea borradores, edita campos y publica versiones sin modificar las
+  versiones ya publicadas.
+- **Vendedores:** crea, edita, activa o desactiva integrantes y define su orden de
+  rotación. Al menos un vendedor debe permanecer activo.
+- **Reglas comerciales:** configura los siete días de la semana, feriados y plazos de
+  seguimiento/cierre. La zona horaria operativa es `America/Argentina/Buenos_Aires`.
+
+Después de cambiar horarios, feriados o plazos, el worker puede tardar hasta un minuto
+en tomar la nueva configuración debido a su caché local.

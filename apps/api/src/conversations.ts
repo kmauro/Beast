@@ -1,6 +1,12 @@
-import type { BeastDatabase, SensitiveDataCipher } from '@beast/database';
+import {
+  AssignmentError,
+  assignConversationToNextSeller,
+  type BeastDatabase,
+  type SensitiveDataCipher,
+} from '@beast/database';
 import {
   ConversationStateSchema,
+  assertTransition,
   type ConversationDetail,
   type ConversationListItem,
   type ConversationListResponse,
@@ -15,6 +21,14 @@ const ListQuerySchema = z.object({
 });
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
+const TransitionSchema = z.object({
+  state: ConversationStateSchema,
+  sellerId: z.string().uuid().nullable().optional(),
+});
+const AssignmentSchema = z.object({
+  reason: z.enum(['QUALIFICATION_COMPLETE', 'HUMAN_REQUESTED', 'MODEL_UNCERTAIN'])
+    .default('HUMAN_REQUESTED'),
+});
 
 function iso(value: Date | string): string {
   return new Date(value).toISOString();
@@ -157,5 +171,74 @@ export async function registerConversationRoutes(
     };
 
     return response;
+  });
+
+  app.post('/conversations/:id/transition', async (request, reply) => {
+    const params = ParamsSchema.safeParse(request.params);
+    const body = TransitionSchema.safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ error: 'INVALID_TRANSITION' });
+    }
+
+    const current = await db.selectFrom('conversations')
+      .select(['id', 'state', 'seller_id'])
+      .where('id', '=', params.data.id)
+      .executeTakeFirst();
+    if (!current) return reply.code(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+
+    const currentState = ConversationStateSchema.parse(current.state);
+    try {
+      assertTransition(currentState, body.data.state);
+    } catch {
+      return reply.code(409).send({ error: 'TRANSITION_NOT_ALLOWED', from: currentState, to: body.data.state });
+    }
+
+    const sellerId = body.data.sellerId === undefined ? current.seller_id : body.data.sellerId;
+    if (body.data.state === 'SELLER_ASSIGNED') {
+      if (!sellerId) return reply.code(400).send({ error: 'SELLER_REQUIRED' });
+      const seller = await db.selectFrom('sellers').select('id')
+        .where('id', '=', sellerId).where('active', '=', true).executeTakeFirst();
+      if (!seller) return reply.code(400).send({ error: 'ACTIVE_SELLER_REQUIRED' });
+    }
+
+    const result = await db.transaction().execute(async (transaction) => {
+      const updated = await transaction.updateTable('conversations').set({
+        state: body.data.state,
+        seller_id: body.data.state === 'NEW' ? null : sellerId,
+        closed_at: body.data.state === 'CLOSED' ? new Date() : null,
+        ...(body.data.state === 'SELLER_ASSIGNED' ? { assigned_at: new Date() } : {}),
+        ...(body.data.state === 'NEW' ? { assigned_at: null } : {}),
+        ...(body.data.state === 'NEW' ? { handoff_reason: null, active_form_version_id: null } : {}),
+      }).where('id', '=', current.id).where('state', '=', current.state).executeTakeFirst();
+      if (Number(updated.numUpdatedRows) !== 1) return false;
+
+      await transaction.insertInto('audit_log').values({
+        actor_user_id: null,
+        action: 'CONVERSATION_STATE_CHANGED',
+        entity_type: 'conversation',
+        entity_id: current.id,
+        before_json: JSON.stringify({ state: currentState, sellerId: current.seller_id }),
+        after_json: JSON.stringify({ state: body.data.state, sellerId }),
+      }).execute();
+      return true;
+    });
+
+    if (!result) return reply.code(409).send({ error: 'CONVERSATION_CHANGED_CONCURRENTLY' });
+    return reply.code(204).send();
+  });
+
+  app.post('/conversations/:id/assign', async (request, reply) => {
+    const params = ParamsSchema.safeParse(request.params);
+    const body = AssignmentSchema.safeParse(request.body ?? {});
+    if (!params.success || !body.success) return reply.code(400).send({ error: 'INVALID_ASSIGNMENT' });
+    try {
+      return await assignConversationToNextSeller(db, params.data.id, body.data.reason);
+    } catch (error) {
+      if (error instanceof AssignmentError) {
+        const status = error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 409;
+        return reply.code(status).send({ error: error.code });
+      }
+      throw error;
+    }
   });
 }

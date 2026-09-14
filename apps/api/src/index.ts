@@ -6,10 +6,12 @@ import { createDatabase, SensitiveDataCipher } from '@beast/database';
 import 'dotenv/config';
 import Fastify from 'fastify';
 import { createAuthGuard, createSameOriginGuard, registerAuthRoutes } from './auth.js';
+import { registerBusinessRuleRoutes } from './business-rules.js';
 import { loadConfig } from './config.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerFormRoutes } from './forms.js';
 import { getSystemHealth } from './health.js';
+import { registerSellerRoutes } from './sellers.js';
 
 const config = loadConfig();
 const db = createDatabase(config.DATABASE_URL);
@@ -48,6 +50,8 @@ await app.register(
     protectedApi.addHook('preHandler', createAuthGuard());
     await registerConversationRoutes(protectedApi, db, cipher);
     await registerFormRoutes(protectedApi, db);
+    await registerSellerRoutes(protectedApi, db, cipher);
+    await registerBusinessRuleRoutes(protectedApi, db, config);
   },
   { prefix: '/api' },
 );

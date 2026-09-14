@@ -106,6 +106,34 @@ export interface JobsTable {
   updated_at: Generated<Timestamp>;
 }
 
+export interface SellerRotationTable {
+  id: number;
+  current_seller_id: string | null;
+  assignments_in_batch: number;
+  batch_size: number;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BusinessHoursTable {
+  weekday: number;
+  enabled: ColumnType<boolean, boolean | number, boolean | number>;
+  opens_at: string | null;
+  closes_at: string | null;
+}
+
+export interface HolidaysTable {
+  holiday_date: ColumnType<Date | string, Date | string, Date | string>;
+  name: string;
+  created_at: Generated<Timestamp>;
+}
+
+export interface BotSettingsTable {
+  setting_key: string;
+  setting_value: unknown;
+  updated_by: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface SystemComponentsTable {
   component: string;
   status: 'UP' | 'DEGRADED' | 'DOWN' | 'UNKNOWN';
@@ -134,6 +162,10 @@ export interface DatabaseSchema {
   conversations: ConversationsTable;
   messages: MessagesTable;
   jobs: JobsTable;
+  seller_rotation: SellerRotationTable;
+  business_hours: BusinessHoursTable;
+  holidays: HolidaysTable;
+  bot_settings: BotSettingsTable;
   system_components: SystemComponentsTable;
   audit_log: AuditLogTable;
 }

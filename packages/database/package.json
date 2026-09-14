@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@beast/shared": "*",
     "kysely": "^0.29.0",
     "mysql2": "^3.14.0"
   }
