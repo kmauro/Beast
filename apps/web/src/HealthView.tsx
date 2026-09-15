@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { SystemHealth } from '@beast/shared';
+import type { FailedJobItem, SystemHealth } from '@beast/shared';
 import { ApiError, apiRequest } from './api.js';
 
-const labels: Record<string, string> = { mysql: 'Base de datos', ollama: 'Modelo local', whatsapp: 'WhatsApp' };
+const labels: Record<string, string> = {
+  mysql: 'Base de datos',
+  ollama: 'Modelo local',
+  whatsapp: 'WhatsApp',
+  job_queue: 'Cola de trabajos',
+};
 
 export function HealthView() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [failedJobs, setFailedJobs] = useState<FailedJobItem[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -28,11 +34,27 @@ export function HealthView() {
           setError(requestError instanceof Error ? requestError.message : 'No se pudo consultar');
         }
       }
+      try {
+        const jobs = await apiRequest<FailedJobItem[]>('/api/jobs/failed');
+        if (active) setFailedJobs(jobs);
+      } catch {
+        if (active) setError('No se pudieron consultar los trabajos fallidos.');
+      }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15_000);
     return () => { active = false; window.clearInterval(timer); };
   }, []);
+
+  const retry = async (jobId: string) => {
+    try {
+      await apiRequest(`/api/jobs/${jobId}/retry`, { method: 'POST' });
+      setFailedJobs((current) => current.filter((job) => job.id !== jobId));
+      setError(null);
+    } catch {
+      setError('No se pudo reintentar el trabajo.');
+    }
+  };
 
   return (
     <>
@@ -49,6 +71,13 @@ export function HealthView() {
           </article>
         ))}
       </section>
+      {failedJobs.length > 0 && <section className="failed-jobs">
+        <h2>Trabajos que requieren intervención</h2>
+        {failedJobs.map((job) => <article key={job.id}>
+          <div><strong>{job.jobType}</strong><small>{job.attempts}/{job.maxAttempts} intentos · {new Date(job.createdAt).toLocaleString('es-AR')}</small><p>{job.lastError ?? 'Sin detalle'}</p></div>
+          <button className="secondary" onClick={() => void retry(job.id)}>Reintentar</button>
+        </article>)}
+      </section>}
     </>
   );
 }

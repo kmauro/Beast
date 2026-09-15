@@ -90,6 +90,35 @@ export interface MessagesTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface ConversationServicesTable {
+  conversation_id: string;
+  service_id: string;
+  primary_service: ColumnType<boolean, boolean | number, boolean | number>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface FormAnswersTable {
+  id: string;
+  conversation_id: string;
+  form_field_id: string;
+  value_json: unknown;
+  confidence: ColumnType<number | null, number | string | null, number | string | null>;
+  source_message_id: string | null;
+  confirmed_by_customer: ColumnType<boolean, boolean | number, boolean | number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface SummariesTable {
+  id: string;
+  conversation_id: string;
+  version_number: number;
+  summary_text: string;
+  structured_data: unknown;
+  model_name: string;
+  created_at: Generated<Timestamp>;
+}
+
 export interface JobsTable {
   id: string;
   job_type: string;
@@ -161,6 +190,9 @@ export interface DatabaseSchema {
   form_fields: FormFieldsTable;
   conversations: ConversationsTable;
   messages: MessagesTable;
+  conversation_services: ConversationServicesTable;
+  form_answers: FormAnswersTable;
+  summaries: SummariesTable;
   jobs: JobsTable;
   seller_rotation: SellerRotationTable;
   business_hours: BusinessHoursTable;

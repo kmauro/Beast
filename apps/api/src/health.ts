@@ -76,6 +76,26 @@ async function workerHealth(db: BeastDatabase): Promise<ComponentHealth> {
   };
 }
 
+async function queueHealth(db: BeastDatabase): Promise<ComponentHealth> {
+  const checkedAt = new Date().toISOString();
+  const rows = await db.selectFrom('jobs').select(['status'])
+    .select((expression) => expression.fn.countAll<number>().as('total'))
+    .where('status', 'in', ['PENDING', 'PROCESSING', 'FAILED'])
+    .groupBy('status').execute();
+  const counts = new Map(rows.map((row) => [row.status, Number(row.total)]));
+  const failed = counts.get('FAILED') ?? 0;
+  const pending = counts.get('PENDING') ?? 0;
+  const processing = counts.get('PROCESSING') ?? 0;
+  return {
+    component: 'job_queue',
+    status: failed > 0 ? 'DEGRADED' : 'UP',
+    checkedAt,
+    detail: failed > 0
+      ? `${failed} trabajos agotaron sus reintentos; ${pending} pendientes y ${processing} procesando`
+      : `${pending} pendientes y ${processing} procesando`,
+  };
+}
+
 export async function getSystemHealth(
   db: BeastDatabase,
   config: ApiConfig,
@@ -85,6 +105,12 @@ export async function getSystemHealth(
     ollamaHealth(config),
     workerHealth(db).catch((error: unknown) => ({
       component: 'whatsapp',
+      status: 'DOWN' as const,
+      checkedAt: new Date().toISOString(),
+      detail: error instanceof Error ? error.message : 'Error desconocido',
+    })),
+    queueHealth(db).catch((error: unknown) => ({
+      component: 'job_queue',
       status: 'DOWN' as const,
       checkedAt: new Date().toISOString(),
       detail: error instanceof Error ? error.message : 'Error desconocido',
@@ -99,4 +125,3 @@ export async function getSystemHealth(
 
   return { status, checkedAt: new Date().toISOString(), components };
 }
-

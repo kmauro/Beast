@@ -9,6 +9,13 @@ const stateLabels: Record<ConversationState, string> = {
 };
 const dateFormatter = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 
+function displayAnswer(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join(', ');
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
+  if (value === null || value === undefined) return 'Sin dato';
+  return String(value);
+}
+
 function ConversationRow({ conversation, selected, onSelect }: { conversation: ConversationListItem; selected: boolean; onSelect: () => void }) {
   return (
     <button className={`conversation-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
@@ -94,7 +101,7 @@ export function ConversationsView() {
         </div>
         <div className="conversation-detail">
           {!detail && <p className="empty-state">Seleccioná una conversación.</p>}
-          {detail && <><div className="detail-heading"><div><p className="eyebrow">Cliente</p><h2>{detail.customer}</h2></div><div className="detail-actions"><span className={`state-badge state-${detail.state.toLowerCase()}`}>{stateLabels[detail.state]}</span>{['NEW', 'BOT_QUALIFYING', 'OUT_OF_HOURS', 'READY_FOR_HANDOFF'].includes(detail.state) && <button className="primary" onClick={() => void assignSeller()}>Asignar vendedor</button>}{detail.state === 'CLOSED' ? <button className="secondary" onClick={() => void transition('NEW')}>Reabrir</button> : <button className="secondary" onClick={() => void transition('CLOSED')}>Cerrar</button>}</div></div><p className="detail-meta">{detail.sellerName ? `Asignado a ${detail.sellerName}` : 'Sin vendedor asignado'}</p><div className="message-thread">{detail.messages.map((message) => <article className={`message ${message.direction === 'INBOUND' ? 'incoming' : 'outgoing'}`} key={message.id}><small>{message.senderType}</small><p>{message.body}</p><time>{dateFormatter.format(new Date(message.occurredAt))}</time></article>)}</div></>}
+          {detail && <><div className="detail-heading"><div><p className="eyebrow">Cliente</p><h2>{detail.customer}</h2></div><div className="detail-actions"><span className={`state-badge state-${detail.state.toLowerCase()}`}>{stateLabels[detail.state]}</span>{['NEW', 'BOT_QUALIFYING', 'OUT_OF_HOURS', 'READY_FOR_HANDOFF'].includes(detail.state) && <button className="primary" onClick={() => void assignSeller()}>Asignar vendedor</button>}{detail.state === 'CLOSED' ? <button className="secondary" onClick={() => void transition('NEW')}>Reabrir</button> : <button className="secondary" onClick={() => void transition('CLOSED')}>Cerrar</button>}</div></div><p className="detail-meta">{detail.sellerName ? `Asignado a ${detail.sellerName}` : 'Sin vendedor asignado'}{detail.serviceName ? ` · ${detail.serviceName}` : ''}</p>{(detail.answers.length > 0 || detail.summary) && <section className="qualification-panel">{detail.answers.length > 0 && <div><h3>Información extraída</h3><dl>{detail.answers.map((answer) => <div key={answer.key}><dt>{answer.label}</dt><dd>{displayAnswer(answer.value)} <small>{Math.round(answer.confidence * 100)}%{answer.confirmed ? ' · confirmado' : ''}</small></dd></div>)}</dl></div>}{detail.summary && <div><h3>Resumen de transferencia</h3><p>{detail.summary}</p></div>}</section>}<div className="message-thread">{detail.messages.map((message) => <article className={`message ${message.direction === 'INBOUND' ? 'incoming' : 'outgoing'}`} key={message.id}><small>{message.senderType}</small><p>{message.body}</p><time>{dateFormatter.format(new Date(message.occurredAt))}</time></article>)}</div></>}
         </div>
       </section>
     </>

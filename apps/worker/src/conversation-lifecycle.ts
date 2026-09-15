@@ -1,4 +1,4 @@
-import type { BeastDatabase } from '@beast/database';
+import { enqueueJob, type BeastDatabase } from '@beast/database';
 import { assertTransition, ConversationStateSchema, type ConversationState } from '@beast/shared';
 import { DateTime } from 'luxon';
 import type { WorkerConfig } from './config.js';
@@ -212,10 +212,11 @@ export class ConversationLifecycle {
     expectedLastMessageAt: Date | null = null,
   ): Promise<boolean> {
     assertTransition(from, to);
+    const transitionedAt = new Date();
     return this.db.transaction().execute(async (transaction) => {
       let update = transaction.updateTable('conversations').set({
         state: to,
-        closed_at: to === 'CLOSED' ? new Date() : null,
+        closed_at: to === 'CLOSED' ? transitionedAt : null,
       }).where('id', '=', conversationId).where('state', '=', from);
       if (expectedLastMessageAt) {
         update = update.where('last_message_at', '=', expectedLastMessageAt);
@@ -230,6 +231,12 @@ export class ConversationLifecycle {
         before_json: JSON.stringify({ state: from }),
         after_json: JSON.stringify({ state: to, reason }),
       }).execute();
+      await enqueueJob(transaction, {
+        jobType: 'APPLY_CONVERSATION_LABEL',
+        deduplicationKey: `state-label:${conversationId}:${to}:${transitionedAt.toISOString()}`,
+        payload: { conversationId, force: reason === 'INBOUND_MESSAGE' },
+        maxAttempts: 10,
+      });
       return true;
     });
   }

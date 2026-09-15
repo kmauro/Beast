@@ -11,6 +11,7 @@ import { loadConfig } from './config.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerFormRoutes } from './forms.js';
 import { getSystemHealth } from './health.js';
+import { registerJobRoutes } from './jobs.js';
 import { registerSellerRoutes } from './sellers.js';
 
 const config = loadConfig();
@@ -52,6 +53,7 @@ await app.register(
     await registerFormRoutes(protectedApi, db);
     await registerSellerRoutes(protectedApi, db, cipher);
     await registerBusinessRuleRoutes(protectedApi, db, config);
+    await registerJobRoutes(protectedApi, db);
   },
   { prefix: '/api' },
 );

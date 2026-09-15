@@ -60,6 +60,11 @@ h2 { margin: 4px 0 12px; }
 .dot.up { background: #43be5a; box-shadow: 0 0 0 4px #e0f7e4; }
 .dot.degraded { background: #d5a511; box-shadow: 0 0 0 4px #fff3cb; }
 .dot.down { background: #d85447; box-shadow: 0 0 0 4px #ffe6e2; }
+.failed-jobs { margin-top: 18px; background: #fff; border: 1px solid #e2d6c5; border-radius: 16px; padding: 20px; }
+.failed-jobs h2 { font-size: 18px; }
+.failed-jobs article { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 13px 0; border-top: 1px solid #eee8df; }
+.failed-jobs small { display: block; color: #7b827c; margin-top: 4px; }
+.failed-jobs p { color: #8e1f14; font-size: 12px; margin: 6px 0 0; overflow-wrap: anywhere; }
 
 .toolbar { background: #fff; border: 1px solid #dfe4dd; border-radius: 12px; padding: 12px; margin-bottom: 14px; }
 .toolbar label { width: 240px; }
@@ -76,6 +81,15 @@ h2 { margin: 4px 0 12px; }
 .detail-actions { display: flex; align-items: center; gap: 9px; }
 .detail-heading h2 { font-size: 24px; }
 .detail-meta { color: #748077; font-size: 13px; margin-top: 0; }
+.qualification-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.qualification-panel > div { border: 1px solid #e0e6df; border-radius: 12px; padding: 14px; background: #fafcf9; }
+.qualification-panel h3 { margin: 0 0 10px; font-size: 14px; }
+.qualification-panel dl { display: grid; gap: 7px; margin: 0; }
+.qualification-panel dl > div { display: grid; grid-template-columns: minmax(100px, .8fr) minmax(0, 1.2fr); gap: 8px; }
+.qualification-panel dt { color: #6d786f; font-size: 12px; }
+.qualification-panel dd { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.qualification-panel dd small { display: block; color: #7d877f; margin-top: 2px; }
+.qualification-panel p { white-space: pre-wrap; font-size: 12px; line-height: 1.55; margin: 0; }
 .message-thread { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; max-height: 55vh; overflow-y: auto; padding-right: 6px; }
 .message { max-width: 76%; padding: 11px 13px; border-radius: 14px; background: #f0f2ef; align-self: flex-start; }
 .message.outgoing { background: #d8f7df; align-self: flex-end; }
@@ -155,6 +169,7 @@ h2 { margin: 4px 0 12px; }
   .field-grid .wide { grid-column: auto; }
   .message { max-width: 92%; }
   .hour-row { grid-template-columns: 1fr 1fr; }
+  .qualification-panel { grid-template-columns: 1fr; }
   .hour-row > span { display: none; }
   .holiday-form { grid-template-columns: 1fr; }
 }

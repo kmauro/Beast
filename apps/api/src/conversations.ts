@@ -1,6 +1,7 @@
 import {
   AssignmentError,
   assignConversationToNextSeller,
+  enqueueJob,
   type BeastDatabase,
   type SensitiveDataCipher,
 } from '@beast/database';
@@ -42,9 +43,79 @@ function decryptOrPlaceholder(cipher: SensitiveDataCipher, payload: string): str
   }
 }
 
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value !== 'string') return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function decryptAnswer(cipher: SensitiveDataCipher, value: unknown): unknown {
+  const parsed = parseJson<unknown>(value, null);
+  if (typeof parsed === 'object' && parsed !== null && 'encrypted' in parsed) {
+    const encrypted = (parsed as { encrypted?: unknown }).encrypted;
+    if (typeof encrypted === 'string') {
+      try {
+        return JSON.parse(cipher.decrypt(encrypted)) as unknown;
+      } catch {
+        return '[Dato no disponible]';
+      }
+    }
+  }
+  return parsed;
+}
+
+function toBoolean(value: boolean | number): boolean {
+  return value === true || value === 1;
+}
+
 function customerLabel(cipher: SensitiveDataCipher, payload: string): string {
   const identifier = decryptOrPlaceholder(cipher, payload);
   return identifier.replace(/@(c\.us|lid)$/, '');
+}
+
+async function buildManualSummary(
+  db: BeastDatabase,
+  cipher: SensitiveDataCipher,
+  conversationId: string,
+): Promise<{ textEncrypted: string; structuredDataEncrypted: string; modelName: string }> {
+  const conversation = await db.selectFrom('conversations as conversation')
+    .leftJoin('conversation_services as selected', (join) => join
+      .onRef('selected.conversation_id', '=', 'conversation.id')
+      .on('selected.primary_service', '=', true))
+    .leftJoin('service_catalog as service', 'service.id', 'selected.service_id')
+    .select(['conversation.customer_number_encrypted', 'service.name as service_name'])
+    .where('conversation.id', '=', conversationId).executeTakeFirst();
+  const rows = await db.selectFrom('messages')
+    .select(['direction', 'sender_type', 'body_encrypted'])
+    .where('conversation_id', '=', conversationId)
+    .orderBy('occurred_at', 'desc').limit(12).execute();
+  const recentMessages = rows.reverse().map((message) => ({
+    sender: message.direction === 'INBOUND' ? 'Cliente' : message.sender_type,
+    body: decryptOrPlaceholder(cipher, message.body_encrypted),
+  }));
+  const customer = conversation
+    ? customerLabel(cipher, conversation.customer_number_encrypted)
+    : 'Desconocido';
+  const text = [
+    'Nueva consulta derivada manualmente desde Beast',
+    `Cliente: ${customer}`,
+    `Servicio: ${conversation?.service_name ?? 'Sin confirmar'}`,
+    'Últimos mensajes:',
+    ...recentMessages.map((message) => `${message.sender}: ${message.body}`),
+  ].join('\n');
+  return {
+    textEncrypted: cipher.encrypt(text),
+    structuredDataEncrypted: cipher.encrypt(JSON.stringify({
+      customer,
+      serviceName: conversation?.service_name ?? null,
+      recentMessages,
+    })),
+    modelName: 'manual-panel',
+  };
 }
 
 export async function registerConversationRoutes(
@@ -131,13 +202,19 @@ export async function registerConversationRoutes(
     const conversation = await db
       .selectFrom('conversations as conversation')
       .leftJoin('sellers as seller', 'seller.id', 'conversation.seller_id')
+      .leftJoin('conversation_services as selected', (join) => join
+        .onRef('selected.conversation_id', '=', 'conversation.id')
+        .on('selected.primary_service', '=', true))
+      .leftJoin('service_catalog as service', 'service.id', 'selected.service_id')
       .select([
         'conversation.id',
         'conversation.customer_number_encrypted',
         'conversation.state',
+        'conversation.active_form_version_id',
         'conversation.opened_at',
         'conversation.last_message_at',
         'seller.name as seller_name',
+        'service.name as service_name',
       ])
       .where('conversation.id', '=', parsed.data.id)
       .executeTakeFirst();
@@ -152,6 +229,24 @@ export async function registerConversationRoutes(
       .where('conversation_id', '=', conversation.id)
       .orderBy('occurred_at', 'asc')
       .execute();
+    const answers = conversation.active_form_version_id
+      ? await db.selectFrom('form_answers as answer')
+        .innerJoin('form_fields as field', 'field.id', 'answer.form_field_id')
+        .select([
+          'field.field_key',
+          'field.label',
+          'answer.value_json',
+          'answer.confidence',
+          'answer.confirmed_by_customer',
+        ])
+        .where('answer.conversation_id', '=', conversation.id)
+        .where('field.form_version_id', '=', conversation.active_form_version_id)
+        .orderBy('field.display_order', 'asc')
+        .execute()
+      : [];
+    const summary = await db.selectFrom('summaries').select('summary_text')
+      .where('conversation_id', '=', conversation.id)
+      .orderBy('version_number', 'desc').executeTakeFirst();
 
     const response: ConversationDetail = {
       id: conversation.id,
@@ -161,6 +256,15 @@ export async function registerConversationRoutes(
       messageCount: messages.length,
       openedAt: iso(conversation.opened_at),
       lastMessageAt: iso(conversation.last_message_at),
+      serviceName: conversation.service_name,
+      answers: answers.map((answer) => ({
+        key: answer.field_key,
+        label: answer.label,
+        value: decryptAnswer(cipher, answer.value_json),
+        confidence: Number(answer.confidence ?? 0),
+        confirmed: toBoolean(answer.confirmed_by_customer),
+      })),
+      summary: summary ? decryptOrPlaceholder(cipher, summary.summary_text) : null,
       messages: messages.map((message) => ({
         id: message.id,
         direction: message.direction,
@@ -202,11 +306,12 @@ export async function registerConversationRoutes(
     }
 
     const result = await db.transaction().execute(async (transaction) => {
+      const transitionedAt = new Date();
       const updated = await transaction.updateTable('conversations').set({
         state: body.data.state,
         seller_id: body.data.state === 'NEW' ? null : sellerId,
-        closed_at: body.data.state === 'CLOSED' ? new Date() : null,
-        ...(body.data.state === 'SELLER_ASSIGNED' ? { assigned_at: new Date() } : {}),
+        closed_at: body.data.state === 'CLOSED' ? transitionedAt : null,
+        ...(body.data.state === 'SELLER_ASSIGNED' ? { assigned_at: transitionedAt } : {}),
         ...(body.data.state === 'NEW' ? { assigned_at: null } : {}),
         ...(body.data.state === 'NEW' ? { handoff_reason: null, active_form_version_id: null } : {}),
       }).where('id', '=', current.id).where('state', '=', current.state).executeTakeFirst();
@@ -220,6 +325,12 @@ export async function registerConversationRoutes(
         before_json: JSON.stringify({ state: currentState, sellerId: current.seller_id }),
         after_json: JSON.stringify({ state: body.data.state, sellerId }),
       }).execute();
+      await enqueueJob(transaction, {
+        jobType: 'APPLY_CONVERSATION_LABEL',
+        deduplicationKey: `manual-state-label:${current.id}:${body.data.state}:${transitionedAt.toISOString()}`,
+        payload: { conversationId: current.id, force: body.data.state === 'NEW' },
+        maxAttempts: 10,
+      });
       return true;
     });
 
@@ -232,7 +343,8 @@ export async function registerConversationRoutes(
     const body = AssignmentSchema.safeParse(request.body ?? {});
     if (!params.success || !body.success) return reply.code(400).send({ error: 'INVALID_ASSIGNMENT' });
     try {
-      return await assignConversationToNextSeller(db, params.data.id, body.data.reason);
+      const summary = await buildManualSummary(db, cipher, params.data.id);
+      return await assignConversationToNextSeller(db, params.data.id, body.data.reason, summary);
     } catch (error) {
       if (error instanceof AssignmentError) {
         const status = error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 409;

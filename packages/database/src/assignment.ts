@@ -5,7 +5,9 @@ import {
   nextSeller,
   type HandoffReason,
 } from '@beast/shared';
+import { randomUUID } from 'node:crypto';
 import type { BeastDatabase } from './client.js';
+import { enqueueJob } from './jobs.js';
 
 export class AssignmentError extends Error {
   constructor(readonly code: 'CONVERSATION_NOT_FOUND' | 'NO_ACTIVE_SELLERS' | 'INVALID_STATE') {
@@ -20,12 +22,20 @@ export interface AssignmentResult {
   whatsappLabel: string;
   assignmentsInBatch: number;
   batchSize: number;
+  summaryId: string | null;
+}
+
+export interface AssignmentSummary {
+  textEncrypted: string;
+  structuredDataEncrypted: string;
+  modelName: string;
 }
 
 export async function assignConversationToNextSeller(
   db: BeastDatabase,
   conversationId: string,
   reason: HandoffReason,
+  summary: AssignmentSummary | null = null,
 ): Promise<AssignmentResult> {
   const validatedReason = HandoffReasonSchema.parse(reason);
   return db.transaction().execute(async (transaction) => {
@@ -63,6 +73,8 @@ export async function assignConversationToNextSeller(
       batchSize: rotation.batch_size,
     });
     const seller = sellers.find((candidate) => candidate.id === next.sellerId)!;
+    const assignedAt = new Date();
+    const summaryId = summary ? randomUUID() : null;
 
     await transaction.updateTable('seller_rotation').set({
       current_seller_id: seller.id,
@@ -72,9 +84,37 @@ export async function assignConversationToNextSeller(
       state: 'SELLER_ASSIGNED',
       seller_id: seller.id,
       handoff_reason: validatedReason,
-      assigned_at: new Date(),
+      assigned_at: assignedAt,
       closed_at: null,
     }).where('id', '=', conversation.id).execute();
+    await enqueueJob(transaction, {
+      jobType: 'APPLY_CONVERSATION_LABEL',
+      deduplicationKey: `assignment-label:${conversation.id}:${seller.id}:${assignedAt.toISOString()}`,
+      payload: { conversationId: conversation.id },
+      maxAttempts: 10,
+    });
+    if (summary && summaryId) {
+      const latestSummary = await transaction.selectFrom('summaries')
+        .select('version_number')
+        .where('conversation_id', '=', conversation.id)
+        .orderBy('version_number', 'desc')
+        .forUpdate()
+        .executeTakeFirst();
+      await transaction.insertInto('summaries').values({
+        id: summaryId,
+        conversation_id: conversation.id,
+        version_number: (latestSummary?.version_number ?? 0) + 1,
+        summary_text: summary.textEncrypted,
+        structured_data: JSON.stringify({ encrypted: summary.structuredDataEncrypted }),
+        model_name: summary.modelName,
+      }).execute();
+      await enqueueJob(transaction, {
+        jobType: 'SEND_SELLER_SUMMARY',
+        deduplicationKey: `seller-summary:${summaryId}`,
+        payload: { conversationId: conversation.id, summaryId },
+        maxAttempts: 10,
+      });
+    }
     await transaction.insertInto('audit_log').values({
       actor_user_id: null,
       action: 'CONVERSATION_ASSIGNED',
@@ -96,6 +136,7 @@ export async function assignConversationToNextSeller(
       whatsappLabel: seller.whatsapp_label,
       assignmentsInBatch: next.assignmentsInBatch,
       batchSize: rotation.batch_size,
+      summaryId,
     };
   });
 }

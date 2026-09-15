@@ -64,20 +64,57 @@ vendedor reinicia la inactividad. Los valores editados en el panel se guardan en
 las variables de entorno se usan solamente como respaldo cuando todavía no existe una
 configuración persistida.
 
-Las respuestas automáticas permanecen desactivadas. La asignación actual tampoco aplica
-todavía etiquetas en WhatsApp ni envía el resumen al vendedor: esas acciones formarán
-parte del motor conversacional y del flujo de entrega posteriores.
+El motor conversacional usa la salida JSON estructurada de Ollama para detectar el
+servicio, extraer valores del formulario publicado y calcular la confianza. Los valores
+propuestos por el modelo se validan nuevamente en código; una duda, un pedido humano o
+la falta de confianza deriva la conversación a un vendedor. Cada conversación conserva
+la versión de formulario con la que comenzó, aunque después se publique otra.
+
+Los mensajes salientes y las transferencias se procesan mediante la cola persistente de
+MySQL. La cola deduplica por mensaje de origen, limita la frecuencia, reintenta con espera
+exponencial y muestra en **Estado** los trabajos que agotaron sus intentos. Desde allí se
+pueden reintentar manualmente. Los mensajes del propio bot se identifican para que no
+vuelvan a entrar como respuestas del vendedor.
+
+La transferencia crea un resumen cifrado, selecciona al vendedor en bloques de cinco,
+aplica su etiqueta y recién entonces envía el resumen por WhatsApp. La asignación, el
+resumen y los trabajos de entrega se guardan en una sola transacción de MySQL. El panel
+muestra el servicio, las respuestas extraídas, su confianza y el último resumen.
+
+Las respuestas automáticas se controlan con `BOT_REPLY_ENABLED`. Debe mantenerse en
+`false` durante la configuración inicial y cambiarse a `true` sólo después de completar
+la lista de comprobación siguiente.
+
+## Activación del bot
+
+1. Crear manualmente en WhatsApp Business las etiquetas `NUEVO`, `BOT`,
+   `FUERA_DE_HORARIO` y `CERRADO`.
+2. Crear también una etiqueta por vendedor y escribir exactamente ese nombre en la
+   sección **Vendedores**, por ejemplo `VENDEDOR_1` y `VENDEDOR_2`.
+3. Publicar al menos un formulario para cada servicio que vaya a atender el bot.
+4. Confirmar en **Estado** que MySQL, Ollama, WhatsApp y la cola estén disponibles.
+5. Probar con un número interno y revisar la extracción y el resumen en la bandeja.
+6. Cambiar `BOT_REPLY_ENABLED=true` en `.env` y reconstruir únicamente `worker`.
+
+El worker revisa periódicamente las etiquetas modificadas desde WhatsApp. `CERRADO`
+tiene prioridad y actualiza MySQL; un mensaje nuevo del cliente abre nuevamente la
+conversación y reemplaza la etiqueta. Las etiquetas manuales de vendedor también cambian
+el responsable sin avanzar la rotación automática. Si un chat tiene dos etiquetas de
+vendedor, el sistema registra el conflicto y no elige una arbitrariamente.
 
 ## Panel interno
 
 - **Conversaciones:** filtra por estado, muestra el historial, asigna por rotación y
-  permite cerrar o reabrir manualmente.
+  permite cerrar o reabrir manualmente. También muestra servicio, datos extraídos,
+  confianza y resumen.
 - **Formularios:** crea borradores, edita campos y publica versiones sin modificar las
   versiones ya publicadas.
 - **Vendedores:** crea, edita, activa o desactiva integrantes y define su orden de
   rotación. Al menos un vendedor debe permanecer activo.
 - **Reglas comerciales:** configura los siete días de la semana, feriados y plazos de
   seguimiento/cierre. La zona horaria operativa es `America/Argentina/Buenos_Aires`.
+- **Estado:** muestra la salud de MySQL, Ollama, WhatsApp y la cola, y permite reintentar
+  trabajos que agotaron sus intentos automáticos.
 
 Después de cambiar horarios, feriados o plazos, el worker puede tardar hasta un minuto
 en tomar la nueva configuración debido a su caché local.

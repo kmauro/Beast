@@ -15,6 +15,13 @@ export type MessageIngestionResult =
 export type MessageIdentitySource = 'serialized' | 'parts' | 'content-fallback';
 export type OutboundSenderType = 'BOT' | 'SELLER';
 
+export interface OutboundDeliveryAudit {
+  action: string;
+  entityType: string;
+  entityId: string;
+  after: Record<string, unknown>;
+}
+
 type RuntimeMessageId = {
   _serialized?: unknown;
   id?: unknown;
@@ -94,6 +101,23 @@ function isDirectOutboundTextMessage(message: Message): boolean {
     typeof message.to === 'string' && message.to.length > 0 && isDirectChatId(message.to);
 }
 
+async function isConfiguredSeller(
+  db: BeastDatabase,
+  cipher: SensitiveDataCipher,
+  chatId: string,
+): Promise<boolean> {
+  const senderDigits = chatId.replace(/\D/g, '');
+  if (!senderDigits) return false;
+  const sellers = await db.selectFrom('sellers').select('whatsapp_number_encrypted').execute();
+  return sellers.some((seller) => {
+    try {
+      return cipher.decrypt(seller.whatsapp_number_encrypted).replace(/\D/g, '') === senderDigits;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function ingestInboundMessage(
   db: BeastDatabase,
   cipher: SensitiveDataCipher,
@@ -101,6 +125,9 @@ export async function ingestInboundMessage(
 ): Promise<MessageIngestionResult> {
   if (!isDirectTextMessage(message)) {
     return { outcome: 'ignored', reason: 'El mensaje no es texto directo entrante' };
+  }
+  if (await isConfiguredSeller(db, cipher, message.from)) {
+    return { outcome: 'ignored', reason: 'El remitente es un vendedor configurado' };
   }
 
   const identity = resolveWhatsAppMessageIdentity(message);
@@ -203,6 +230,7 @@ export async function ingestOutboundMessage(
   cipher: SensitiveDataCipher,
   message: Message,
   senderType: OutboundSenderType = 'SELLER',
+  deliveryAudit: OutboundDeliveryAudit | null = null,
 ): Promise<MessageIngestionResult> {
   if (!isDirectOutboundTextMessage(message)) {
     return { outcome: 'ignored', reason: 'El mensaje no es texto directo saliente' };
@@ -215,7 +243,19 @@ export async function ingestOutboundMessage(
   return db.transaction().execute(async (transaction): Promise<MessageIngestionResult> => {
     const duplicate = await transaction.selectFrom('messages').select('id')
       .where('whatsapp_message_id', '=', messageId).executeTakeFirst();
-    if (duplicate) return { outcome: 'duplicate', messageId, identitySource: identity.source };
+    if (duplicate) {
+      if (deliveryAudit) {
+        await transaction.insertInto('audit_log').values({
+          actor_user_id: null,
+          action: deliveryAudit.action,
+          entity_type: deliveryAudit.entityType,
+          entity_id: deliveryAudit.entityId,
+          before_json: null,
+          after_json: JSON.stringify({ ...deliveryAudit.after, whatsappMessageId: messageId }),
+        }).execute();
+      }
+      return { outcome: 'duplicate', messageId, identitySource: identity.source };
+    }
 
     const conversation = await transaction.selectFrom('conversations')
       .select(['id', 'last_message_at'])
@@ -240,6 +280,16 @@ export async function ingestOutboundMessage(
       body_encrypted: cipher.encrypt(message.body),
       occurred_at: occurredAt,
     }).execute();
+    if (deliveryAudit) {
+      await transaction.insertInto('audit_log').values({
+        actor_user_id: null,
+        action: deliveryAudit.action,
+        entity_type: deliveryAudit.entityType,
+        entity_id: deliveryAudit.entityId,
+        before_json: null,
+        after_json: JSON.stringify({ ...deliveryAudit.after, whatsappMessageId: messageId }),
+      }).execute();
+    }
 
     return {
       outcome: 'stored',

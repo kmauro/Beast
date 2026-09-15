@@ -26,8 +26,19 @@ export interface ConversationMessage {
   occurredAt: string;
 }
 
+export interface ConversationAnswer {
+  key: string;
+  label: string;
+  value: unknown;
+  confidence: number;
+  confirmed: boolean;
+}
+
 export interface ConversationDetail extends ConversationListItem {
   messages: ConversationMessage[];
+  serviceName: string | null;
+  answers: ConversationAnswer[];
+  summary: string | null;
 }
 
 export interface SellerItem {
@@ -57,6 +68,15 @@ export interface BusinessRules {
   holidays: HolidayItem[];
   followUpAfterBusinessHours: number;
   autoCloseAfterBusinessHours: number;
+}
+
+export interface FailedJobItem {
+  id: string;
+  jobType: string;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  createdAt: string;
 }
 
 export interface FormTemplateSummary {

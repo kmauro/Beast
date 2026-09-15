@@ -1,11 +1,13 @@
-import { createDatabase, SensitiveDataCipher } from '@beast/database';
+import { createDatabase, enqueueJob, SensitiveDataCipher } from '@beast/database';
 import 'dotenv/config';
 import qrcode from 'qrcode-terminal';
 import whatsapp from 'whatsapp-web.js';
 import { loadConfig } from './config.js';
 import { ConversationLifecycle } from './conversation-lifecycle.js';
 import { writeHeartbeat, type WorkerStatus } from './heartbeat.js';
+import { BotSendTracker, PersistentJobRunner } from './job-runner.js';
 import { ingestInboundMessage, ingestOutboundMessage } from './message-ingestion.js';
+import { WhatsAppLabelManager } from './whatsapp-labels.js';
 
 const { Client, LocalAuth } = whatsapp;
 const config = loadConfig();
@@ -18,6 +20,8 @@ let currentDetail: string | null = 'Inicializando WhatsApp';
 let shuttingDown = false;
 let ingestionQueue = Promise.resolve();
 let lifecycleSweepRunning = false;
+let labelSyncRunning = false;
+let whatsappReady = false;
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -36,6 +40,9 @@ const client = new Client({
     ],
   },
 });
+const labelManager = new WhatsAppLabelManager(client, db, cipher, config);
+const sendTracker = new BotSendTracker();
+const jobRunner = new PersistentJobRunner(db, cipher, config, client, labelManager, sendTracker);
 
 async function updateStatus(
   status: WorkerStatus,
@@ -62,16 +69,19 @@ client.on('authenticated', () => {
 });
 
 client.on('ready', () => {
+  whatsappReady = true;
   console.log('Cliente de WhatsApp listo');
   void updateStatus('UP', config.BOT_REPLY_ENABLED ? null : 'Respuestas automáticas desactivadas');
 });
 
 client.on('auth_failure', (message) => {
+  whatsappReady = false;
   console.error('Falló la autenticación de WhatsApp:', message);
   void updateStatus('DOWN', `Falló la autenticación: ${message}`);
 });
 
 client.on('disconnected', (reason) => {
+  whatsappReady = false;
   console.error('WhatsApp se desconectó:', reason);
   void updateStatus('DOWN', `Desconectado: ${reason}`);
 });
@@ -82,6 +92,14 @@ client.on('message', (message) => {
       const result = await ingestInboundMessage(db, cipher, message);
       if (result.outcome === 'stored') {
         await lifecycle.handleInbound(result.conversationId, new Date(message.timestamp * 1000));
+        if (config.BOT_REPLY_ENABLED) {
+          await enqueueJob(db, {
+            jobType: 'ANALYZE_CONVERSATION',
+            deduplicationKey: `analysis:${result.messageId}`,
+            payload: { conversationId: result.conversationId, triggerMessageId: result.messageId },
+            availableAt: new Date(Date.now() + config.ANALYSIS_DEBOUNCE_MS),
+          });
+        }
       }
       console.log('Mensaje entrante procesado', {
         outcome: result.outcome,
@@ -101,6 +119,7 @@ client.on('message', (message) => {
 
 client.on('message_create', (message) => {
   if (!message.fromMe) return;
+  if (sendTracker.consume(message.to, message.body)) return;
   ingestionQueue = ingestionQueue
     .then(async () => {
       const result = await ingestOutboundMessage(db, cipher, message);
@@ -141,12 +160,40 @@ async function runLifecycleSweep(): Promise<void> {
 }
 
 const lifecycleTimer = setInterval(() => void runLifecycleSweep(), config.LIFECYCLE_SWEEP_INTERVAL_MS);
+const jobTimer = setInterval(() => {
+  if (whatsappReady) void jobRunner.runOnce();
+}, config.JOB_POLL_INTERVAL_MS);
+
+async function synchronizeLabels(): Promise<void> {
+  if (!whatsappReady || labelSyncRunning) return;
+  labelSyncRunning = true;
+  try {
+    const result = await labelManager.synchronizeManualLabels();
+    if (result.closed > 0 || result.assigned > 0) {
+      console.log('Etiquetas manuales sincronizadas', result);
+    } else if (result.missingClosedLabel) {
+      console.warn(`No existe la etiqueta requerida ${config.LABEL_CLOSED}`);
+      await updateStatus('DEGRADED', `Falta la etiqueta de WhatsApp ${config.LABEL_CLOSED}`);
+    } else if (currentDetail === `Falta la etiqueta de WhatsApp ${config.LABEL_CLOSED}`) {
+      await updateStatus('UP', config.BOT_REPLY_ENABLED ? null : 'Respuestas automáticas desactivadas');
+    }
+  } catch (error) {
+    console.error('No se pudieron sincronizar las etiquetas manuales:', error);
+  } finally {
+    labelSyncRunning = false;
+  }
+}
+
+const labelSyncTimer = setInterval(() => void synchronizeLabels(), config.LABEL_SYNC_INTERVAL_MS);
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(heartbeatTimer);
   clearInterval(lifecycleTimer);
+  clearInterval(jobTimer);
+  clearInterval(labelSyncTimer);
+  jobRunner.stop();
   console.log(`Deteniendo worker por ${signal}`);
 
   try {
@@ -163,5 +210,8 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await updateStatus('DEGRADED', 'Inicializando WhatsApp');
+await jobRunner.initialize();
 await client.initialize();
 void runLifecycleSweep();
+if (whatsappReady) void jobRunner.runOnce();
+void synchronizeLabels();
