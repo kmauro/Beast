@@ -76,10 +76,11 @@ exponencial y muestra en **Estado** los trabajos que agotaron sus intentos. Desd
 pueden reintentar manualmente. Los mensajes del propio bot se identifican para que no
 vuelvan a entrar como respuestas del vendedor.
 
-La transferencia crea un resumen cifrado, selecciona al vendedor en bloques de cinco,
-aplica su etiqueta y recién entonces envía el resumen por WhatsApp. La asignación, el
-resumen y los trabajos de entrega se guardan en una sola transacción de MySQL. El panel
-muestra el servicio, las respuestas extraídas, su confianza y el último resumen.
+La transferencia crea un resumen cifrado y selecciona al vendedor en bloques de cinco.
+La etiqueta y el resumen se procesan mediante trabajos independientes, de modo que un
+fallo de etiquetado no impide notificar al vendedor. La asignación, el resumen y los
+trabajos de entrega se guardan en una sola transacción de MySQL. El panel muestra el
+servicio, las respuestas extraídas, su confianza y el último resumen.
 
 Las respuestas automáticas se controlan con `BOT_REPLY_ENABLED`. Debe mantenerse en
 `false` durante la configuración inicial y cambiarse a `true` sólo después de completar

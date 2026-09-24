@@ -344,7 +344,6 @@ export class PersistentJobRunner {
       .executeTakeFirst();
     if (!record) throw new PermanentJobError('No existe el resumen o el vendedor asignado');
     if (!['SELLER_ASSIGNED', 'PENDING_FOLLOW_UP'].includes(record.state)) return;
-    await this.labels.applyConversationLabel(payload.conversationId);
     const current = await this.db.selectFrom('conversations').select('state')
       .where('id', '=', payload.conversationId).executeTakeFirst();
     if (!current || !['SELLER_ASSIGNED', 'PENDING_FOLLOW_UP'].includes(current.state)) return;

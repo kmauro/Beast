@@ -38,6 +38,15 @@ function parsePayload(value: unknown): unknown {
   }
 }
 
+function jobErrorDetail(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name && error.name !== 'Error'
+      ? `${error.name}: ${error.message}`
+      : error.message;
+  }
+  return String(error);
+}
+
 export async function enqueueJob(db: BeastDatabase, input: EnqueueJobInput): Promise<void> {
   await db.insertInto('jobs').values({
     id: randomUUID(),
@@ -153,7 +162,7 @@ export async function failJob(
   workerId: string,
   error: unknown,
 ): Promise<void> {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail = jobErrorDetail(error);
   const exhausted = job.attempts >= job.maxAttempts;
   const delaySeconds = Math.min(300, 5 * (3 ** Math.max(0, job.attempts - 1)));
   await db.updateTable('jobs').set({
@@ -171,7 +180,7 @@ export async function failJobPermanently(
   workerId: string,
   error: unknown,
 ): Promise<void> {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail = jobErrorDetail(error);
   await db.updateTable('jobs').set({
     status: 'FAILED',
     locked_at: null,

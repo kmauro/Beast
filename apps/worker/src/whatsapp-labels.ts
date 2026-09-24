@@ -5,6 +5,22 @@ import type { WorkerConfig } from './config.js';
 
 type WhatsAppClient = whatsapp.Client;
 type WhatsAppLabel = whatsapp.Label;
+type WhatsAppLabelId = string | number;
+
+function errorDetail(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name && error.name !== 'Error'
+      ? `${error.name}: ${error.message}`
+      : error.message;
+  }
+  return String(error);
+}
+
+function chatIdKind(chatId: string): string {
+  if (chatId.endsWith('@lid')) return '@lid';
+  if (chatId.endsWith('@c.us')) return '@c.us';
+  return 'desconocido';
+}
 
 function normalized(value: string): string {
   return value.trim().toLocaleUpperCase('es-AR');
@@ -60,6 +76,39 @@ export class WhatsAppLabelManager {
     };
   }
 
+  private async cachedChatLabelIds(chatId: string): Promise<WhatsAppLabelId[]> {
+    const page = this.client.pupPage;
+    if (!page) throw new Error('La página de WhatsApp todavía no está disponible');
+
+    try {
+      const result = await page.evaluate((targetChatId) => {
+        type BrowserChat = {
+          id?: { _serialized?: string };
+          labels?: Array<string | number>;
+        };
+        type WhatsAppCollections = {
+          Chat: { getModelsArray(): BrowserChat[] };
+        };
+        const runtime = globalThis as unknown as {
+          require(name: 'WAWebCollections'): WhatsAppCollections;
+        };
+        const chat = runtime.require('WAWebCollections').Chat.getModelsArray()
+          .find((candidate) => candidate.id?._serialized === targetChatId);
+        return chat ? [...(chat.labels ?? [])] : null;
+      }, chatId);
+
+      if (!result) {
+        throw new Error('El chat no está cargado en la colección local de WhatsApp');
+      }
+      return result;
+    } catch (error) {
+      throw new Error(
+        `No se pudieron leer las etiquetas del chat ${chatIdKind(chatId)}: ${errorDetail(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
   applyConversationLabel(conversationId: string, force = false): Promise<void> {
     return this.serialized(() => this.applyConversationLabelUnlocked(conversationId, force));
   }
@@ -87,9 +136,16 @@ export class WhatsAppLabelManager {
     const { labels, managedNames } = await this.labelsAndManagedNames();
     const expected = labels.find((label) => normalized(label.name) === normalized(expectedName));
     if (!expected) throw new Error(`La etiqueta de WhatsApp "${expectedName}" no existe`);
-    const current = await this.client.getChatLabels(chatId);
-    const manuallyClosed = current.some((label) =>
+    const currentIds = await this.cachedChatLabelIds(chatId);
+    const labelById = new Map(labels.map((label) => [String(label.id), label]));
+    const managedIds = new Set(labels
+      .filter((label) => managedNames.has(normalized(label.name)))
+      .map((label) => String(label.id)));
+    const closedLabel = labels.find((label) =>
       normalized(label.name) === normalized(this.config.LABEL_CLOSED));
+    const manuallyClosed = closedLabel
+      ? currentIds.some((id) => String(id) === String(closedLabel.id))
+      : false;
     if (!force && state !== 'CLOSED' && manuallyClosed) {
       await this.db.transaction().execute(async (transaction) => {
         const result = await transaction.updateTable('conversations').set({
@@ -108,13 +164,11 @@ export class WhatsAppLabelManager {
       });
       return;
     }
-    const desiredIds = current
-      .filter((label) => !managedNames.has(normalized(label.name)))
-      .map((label) => label.id);
+    const desiredIds = currentIds.filter((id) => !managedIds.has(String(id)));
     desiredIds.push(expected.id);
-    const currentIds = [...new Set(current.map((label) => String(label.id)))].sort();
+    const currentIdStrings = [...new Set(currentIds.map(String))].sort();
     const nextIds = [...new Set(desiredIds.map(String))].sort();
-    if (currentIds.join(',') === nextIds.join(',')) return;
+    if (currentIdStrings.join(',') === nextIds.join(',')) return;
 
     await this.client.addOrRemoveLabels(desiredIds, [chatId]);
     await this.db.insertInto('audit_log').values({
@@ -122,7 +176,9 @@ export class WhatsAppLabelManager {
       action: 'WHATSAPP_LABEL_APPLIED',
       entity_type: 'conversation',
       entity_id: conversation.id,
-      before_json: JSON.stringify({ labels: current.map((label) => label.name) }),
+      before_json: JSON.stringify({
+        labels: currentIds.map((id) => labelById.get(String(id))?.name ?? `[${String(id)}]`),
+      }),
       after_json: JSON.stringify({ label: expected.name, state }),
     }).execute();
   }
